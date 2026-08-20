@@ -117,10 +117,17 @@
   .legend-swatch{ width:38px; height:6px; border-radius:3px;
     background: linear-gradient(90deg, rgba(79,209,165,.12), var(--mint));
   }
+  /* Outer frame keeps the border/background and stays overflow:visible so
+     tooltips are never clipped. The actual horizontal scrolling happens on
+     the inner .heatstrip-scroll element instead. */
   .heatstrip{
-    display:flex; gap:3px; align-items:flex-end; height:54px;
     padding: 10px 14px; background: var(--surface); border:1px solid var(--border); border-radius: var(--radius);
-    overflow-x:auto;
+    overflow: visible;
+  }
+  .heatstrip-scroll{
+    display:flex; gap:3px; align-items:flex-end; height:54px;
+    overflow-x:auto; overflow-y:visible;
+    padding-top: 46px; margin-top: -46px; /* reclaim space so the tooltip has room to render above the bars without being clipped by the scroll box */
   }
   .heat-tick{
     flex: 1 0 6px; min-width:6px; border-radius: 3px 3px 0 0; background: var(--mint);
@@ -129,10 +136,17 @@
   .heat-tick:hover{ opacity:.75; }
   .heat-tick .tip{
     display:none; position:absolute; bottom: calc(100% + 8px); left:50%; transform:translateX(-50%);
-    background: var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:6px 9px;
-    font-family: var(--font-mono); font-size:11px; white-space:nowrap; z-index:5; box-shadow: 0 8px 20px rgba(0,0,0,.4);
+    background: var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:8px 12px;
+    font-family: var(--font-mono); font-size:13px; font-weight:600; color: var(--text); white-space:nowrap; z-index:50;
+    box-shadow: 0 8px 20px rgba(0,0,0,.5); pointer-events:none;
   }
   .heat-tick:hover .tip{ display:block; }
+  /* Ticks near the left/right edges would push the centered tooltip out of
+     the viewport; nudge it back in so it stays fully readable. */
+  .heat-tick:first-child .tip,
+  .heat-tick:nth-child(2) .tip{ left:0; transform:translateX(0); }
+  .heat-tick:last-child .tip,
+  .heat-tick:nth-last-child(2) .tip{ left:auto; right:0; transform:translateX(0); }
 
   /* ============ KPI GRID ============ */
   .kpi-grid{
@@ -268,7 +282,9 @@
         <span class="t">Intensidade de compromisso por semana</span>
         <span class="heatstrip-legend"><span class="legend-swatch"></span> menor → maior</span>
       </div>
-      <div class="heatstrip" id="heatstrip"></div>
+      <div class="heatstrip">
+        <div class="heatstrip-scroll" id="heatstrip"></div>
+      </div>
     </div>
 
     <div class="kpi-grid" id="kpiGrid"></div>
