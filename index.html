@@ -6,7 +6,6 @@
 <title>Painel Financeiro — Fluxo de Caixa</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 
 <style>
   /* ============ TOKENS ============ */
@@ -158,6 +157,7 @@
   .panel{
     background: var(--surface); border:1px solid var(--border); border-radius: var(--radius);
     padding: 20px;
+    position: relative;
   }
   .panel + .panel{ margin-top:16px; }
   .grid-2{ display:grid; grid-template-columns: 1.3fr 1fr; gap:16px; }
@@ -220,6 +220,16 @@
     display:flex; gap:10px; align-items:flex-start;
   }
   .banner b{ color: var(--amber); }
+  .banner.error{ border-color: var(--coral); }
+  .banner.error b{ color: var(--coral); }
+
+  /* Fallback shown inside a panel when a specific chart/section fails to render */
+  .render-error{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:8px; text-align:center; padding:20px;
+    color: var(--text-dim); font-size:12.5px; background: var(--surface);
+  }
+  .render-error b{ color: var(--coral); font-family: var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
 
   @media (max-width: 980px){
     .kpi-grid{ grid-template-columns: repeat(2,1fr); }
@@ -269,6 +279,11 @@
     <span><b>Modo demonstração.</b> Os dados abaixo são fictícios, gerados apenas para mostrar como o painel funciona. Configure <code>APPS_SCRIPT_URL</code> no topo do arquivo <code>index.html</code> para conectar sua planilha real (veja o README).</span>
   </div>
 
+  <div class="banner error" id="chartLibBanner" style="display:none;">
+    <span>⚠</span>
+    <span><b>Não foi possível carregar a biblioteca de gráficos.</b> Os cartões de número acima continuam funcionando, mas os gráficos abaixo ficarão ocultos até a página conseguir carregar o Chart.js (verifique sua conexão ou bloqueadores de anúncio/script e recarregue a página).</span>
+  </div>
+
   <section id="fluxo">
     <div class="section-head">
       <div>
@@ -278,7 +293,7 @@
     </div>
     <div class="panel">
       <div class="chip-row" id="categoryChips"></div>
-      <div class="chart-box"><canvas id="flowChart"></canvas></div>
+      <div class="chart-box" id="flowChartBox"><canvas id="flowChart"></canvas></div>
     </div>
   </section>
 
@@ -291,9 +306,9 @@
     </div>
     <div class="grid-2">
       <div class="panel">
-        <div class="chart-box short"><canvas id="categoryDonut"></canvas></div>
+        <div class="chart-box short" id="categoryDonutBox"><canvas id="categoryDonut"></canvas></div>
       </div>
-      <div class="panel">
+      <div class="panel" id="rankPanel">
         <div class="heatstrip-label" style="margin-bottom:14px;">
           <span class="t">Top 10 beneficiários</span>
         </div>
@@ -310,7 +325,7 @@
       </div>
     </div>
     <div class="panel">
-      <div class="chart-box"><canvas id="monthlyChart"></canvas></div>
+      <div class="chart-box" id="monthlyChartBox"><canvas id="monthlyChart"></canvas></div>
     </div>
   </section>
 
@@ -331,7 +346,7 @@
         <div class="desc">Total, média semanal e participação de cada categoria no período.</div>
       </div>
     </div>
-    <div class="panel">
+    <div class="panel" id="tablePanel">
       <table>
         <thead>
           <tr><th>Categoria</th><th style="text-align:right;">Total</th><th style="text-align:right;">Média/semana</th><th style="text-align:right;">% do total</th></tr>
@@ -357,6 +372,38 @@
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyeVLP-7zMOzp0qzaKCD205ZcBfNgOlzleHFmYeC7PAH2_QbOXV-V7Uqo4vlcTGVoWqsA/exec';
 const ACCESS_TOKEN = '';      // <-- mesma senha definida em Code.gs (se usar)
 /* ====================================================================== */
+
+/* ---------------- CARREGAMENTO DA BIBLIOTECA DE GRÁFICOS ----------------
+   Antes o <script src="...cdnjs.../chart.umd.min.js"> ficava fixo no <head>.
+   Se esse único CDN falhasse (rede lenta, bloqueador de anúncios, firewall),
+   `Chart` ficava undefined e o PRIMEIRO gráfico (Fluxo semanal) lançava um
+   erro — o que interrompia a execução e deixava TODAS as seções seguintes
+   (composição, comparativo mensal, insights e a tabela) em branco, mesmo
+   as que nem usam gráfico. É exatamente o sintoma relatado.
+   Agora carregamos com uma tentativa + um CDN alternativo de backup, e só
+   então iniciamos o painel — e cada seção passa a se proteger sozinha
+   (ver safeRender mais abaixo), então mesmo que um gráfico falhe, o resto
+   do painel continua aparecendo normalmente. */
+function loadScript(src){
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Falha ao carregar ' + src));
+    document.head.appendChild(s);
+  });
+}
+async function ensureChartLoaded(){
+  if (typeof Chart !== 'undefined') return true;
+  const cdns = [
+    'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js',
+    'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js'
+  ];
+  for (const url of cdns){
+    try { await loadScript(url); if (typeof Chart !== 'undefined') return true; } catch(e){ /* tenta o próximo */ }
+  }
+  return false;
+}
 
 const CATEGORY_COLORS = {
   'Caixa': '#4fd1a5',
@@ -446,6 +493,36 @@ function setStatus(live, text){
   document.getElementById('statusText').textContent = text;
 }
 
+/* ---------------- NORMALIZAÇÃO DE CATEGORIA (SEGURANÇA EXTRA) ----------------
+   O backend (Code.gs) já agrupa variações de grafia da mesma categoria
+   ("Servico" / "Serviço" / "Seviço") e remove as linhas de rodapé
+   (Caixa/Carteira/Total no fim da planilha). Isso aqui é apenas uma
+   segunda camada de proteção caso o painel receba dados de uma versão
+   antiga do backend — nunca deveria precisar fazer nada na prática. */
+function normalizeKey(s){
+  return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
+}
+const FOOTER_KEYS = new Set(['caixa','carteira','total']);
+function sanitizeRows(rows){
+  const counts = {};
+  rows.forEach(r => {
+    const k = normalizeKey(r.tipo);
+    counts[k] = counts[k] || {};
+    counts[k][r.tipo] = (counts[k][r.tipo]||0) + 1;
+  });
+  const canonical = {};
+  Object.keys(counts).forEach(k => {
+    canonical[k] = Object.entries(counts[k]).sort((a,b)=>b[1]-a[1])[0][0];
+  });
+  return rows
+    .filter(r => {
+      const hasWeekly = Object.values(r.weekly||{}).some(v => Number(v) > 0);
+      const isFooterLike = FOOTER_KEYS.has(normalizeKey(r.tipo)) && !hasWeekly && !(r.total > 0);
+      return !isFooterLike;
+    })
+    .map(r => ({ ...r, tipo: canonical[normalizeKey(r.tipo)] }));
+}
+
 /* ---------------- REGRESSÃO LINEAR ---------------- */
 function linearRegression(values){
   const n = values.length;
@@ -460,10 +537,34 @@ function linearRegression(values){
 /* ---------------- APP ---------------- */
 let charts = {};
 let activeCategories = new Set();
+let chartLibReady = false;
+
+/* Cada seção agora é isolada: se uma falhar, mostra um aviso pequeno
+   só naquela seção e loga o erro no console — as outras continuam
+   normalmente em vez de sumirem todas juntas. */
+function safeRender(fn, label, boxId){
+  try {
+    fn();
+    const box = boxId && document.getElementById(boxId);
+    if (box) { const err = box.querySelector('.render-error'); if (err) err.remove(); }
+  } catch (err) {
+    console.error('Falha ao renderizar "' + label + '":', err);
+    if (boxId){
+      const box = document.getElementById(boxId);
+      if (box){
+        let el = box.querySelector('.render-error');
+        if (!el){ el = document.createElement('div'); el.className = 'render-error'; box.appendChild(el); }
+        el.innerHTML = `<b>Não foi possível carregar</b><span>${label}</span>`;
+      }
+    }
+  }
+}
 
 function init(data){
   document.getElementById('sheetNameLabel').textContent = data.sheetName;
   document.getElementById('lastUpdate').textContent = new Date(data.generatedAt).toLocaleString('pt-BR');
+
+  data.rows = sanitizeRows(data.rows || []);
 
   const weeks = data.weeks;
   const categories = [...new Set(data.rows.map(r=>r.tipo))];
@@ -484,9 +585,9 @@ function renderChips(categories){
     chip.addEventListener('click', () => {
       if (activeCategories.has(cat)) activeCategories.delete(cat); else activeCategories.add(cat);
       chip.classList.toggle('active');
-      renderFlowChart(window.__data, window.__weeks);
-      renderRanking(window.__data);
-      renderKPIs(window.__data, window.__weeks);
+      safeRender(() => renderFlowChart(window.__data, window.__weeks), 'gráfico de fluxo semanal', 'flowChartBox');
+      safeRender(() => renderRanking(window.__data), 'ranking de beneficiários', 'rankPanel');
+      safeRender(() => renderKPIs(window.__data, window.__weeks), 'indicadores');
     });
     box.appendChild(chip);
   });
@@ -494,14 +595,21 @@ function renderChips(categories){
 
 function renderAll(data, weeks, categories){
   window.__data = data; window.__weeks = weeks; window.__categories = categories;
-  renderHeatstrip(data, weeks);
-  renderKPIs(data, weeks);
-  renderFlowChart(data, weeks);
-  renderDonut(data, categories);
-  renderRanking(data);
-  renderMonthly(data, weeks, categories);
-  renderInsights(data, weeks, categories);
-  renderCategoryTable(data, categories);
+  safeRender(() => renderHeatstrip(data, weeks), 'faixa de intensidade');
+  safeRender(() => renderKPIs(data, weeks), 'indicadores');
+  if (chartLibReady){
+    safeRender(() => renderFlowChart(data, weeks), 'gráfico de fluxo semanal', 'flowChartBox');
+    safeRender(() => renderDonut(data, categories), 'gráfico de composição', 'categoryDonutBox');
+    safeRender(() => renderMonthly(data, weeks, categories), 'comparativo mensal', 'monthlyChartBox');
+  } else {
+    ['flowChartBox','categoryDonutBox','monthlyChartBox'].forEach(id => {
+      const box = document.getElementById(id);
+      if (box) box.innerHTML = '<div class="render-error"><b>Gráfico indisponível</b><span>biblioteca de gráficos não carregou</span></div>';
+    });
+  }
+  safeRender(() => renderRanking(data), 'ranking de beneficiários', 'rankPanel');
+  safeRender(() => renderInsights(data, weeks, categories), 'dicas automáticas');
+  safeRender(() => renderCategoryTable(data, categories), 'tabela de detalhamento', 'tablePanel');
 }
 
 function weekTotals(data, weeks, filterCats){
@@ -548,7 +656,6 @@ function renderKPIs(data, weeks){
   });
   const topBenef = Object.entries(benefTotals).sort((a,b)=>b[1]-a[1])[0];
 
-  const peakIdx = totals.indexOf(Math.max(...totals));
   const half = Math.floor(weeks.length/2) || 1;
   const firstHalfAvg = totals.slice(0,half).reduce((a,b)=>a+b,0) / half;
   const secondHalfAvg = totals.slice(half).reduce((a,b)=>a+b,0) / (totals.length-half || 1);
@@ -771,7 +878,12 @@ function renderCategoryTable(data, categories){
 }
 
 /* ---------------- BOOT ---------------- */
-loadData().then(init);
+(async function boot(){
+  chartLibReady = await ensureChartLoaded();
+  if (!chartLibReady) document.getElementById('chartLibBanner').style.display = 'flex';
+  const data = await loadData();
+  init(data);
+})();
 </script>
 </body>
 </html>
